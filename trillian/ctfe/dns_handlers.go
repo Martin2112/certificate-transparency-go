@@ -40,14 +40,16 @@ const maxProofLen = 255
 var (
 	// In these formats the last (.*) is always the zone, this is checked outside
 	// the regex matching.
-	sthRE     = regexp.MustCompile("^sth\\.(.*)\\.$")
-	consistRE = regexp.MustCompile("^(\\d+)\\.(\\d+)\\.(\\d+)\\.sth-consistency\\.(.*)\\.$")
-	hashRE    = regexp.MustCompile("^([A-Z0-9]+)\\.hash\\.(.*)\\.$")
-	treeRE    = regexp.MustCompile("^(\\d+)\\.(\\d+)\\.(\\d+)\\.tree\\.(.*)\\.$")
+	sthRE     = regexp.MustCompile(`^sth\.(.*)\.$`)
+	consistRE = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)\.sth-consistency\.(.*)\.$1`)
+	hashRE    = regexp.MustCompile(`^([A-Z0-9]+)\.hash\.(.*)\.$`)
+	treeRE    = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)\.tree\.(.*)\.$`)
 )
 
 type dnsFunc func(*CTDNSHandler, []string, dns.ResponseWriter, *dns.Msg)
 
+// CTDNSHandler encapsulates all the logic for serving CT related DNS
+// requests.
 type CTDNSHandler struct {
 	cfg      *configpb.LogConfig
 	logCtx   *LogContext
@@ -59,6 +61,7 @@ type dnsHandler struct {
 	handleFn dnsFunc
 }
 
+// NewDNS creates a new DNS handler for use with a particular CT log.
 func NewDNS(cfg *configpb.LogConfig, logCtx *LogContext) dns.Handler {
 	return &CTDNSHandler{
 		cfg:    cfg,
@@ -72,11 +75,13 @@ func NewDNS(cfg *configpb.LogConfig, logCtx *LogContext) dns.Handler {
 	}
 }
 
+// ServeDNS implements the dns.Handler interface and is the main serving
+// API.
 func (c *CTDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// From the spec all requests must be class INET, type TXT.
 	if err := validate(r); err != nil {
 		glog.Warningf("CTDNSHandler.ServeDNS(): %v", err)
-		failWithRcode(w, r, dns.RcodeFormatError)
+		failWithRcode(w, r, dns.RcodeFormatError, err)
 		return
 	}
 
@@ -99,7 +104,7 @@ func (c *CTDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 	// No handler matched. Reject the request.
-	failWithRcode(w, r, dns.RcodeNotZone)
+	failWithRcode(w, r, dns.RcodeNotZone, nil)
 }
 
 func sthFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg) {
@@ -107,20 +112,20 @@ func sthFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg)
 	defer cancelFunc()
 	sth, err := GetTreeHead(ctx, c.logCtx.rpcClient, c.logCtx.logID, c.logCtx.LogPrefix)
 	if err != nil {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 
 	// Add the signature over the STH contents.
 	err = c.logCtx.signV1TreeHead(c.logCtx.signer, sth)
 	if err != nil || len(sth.TreeHeadSignature.Signature) == 0 {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 
 	rr, err := buildSTHResponse(params[0], sth)
 	if err != nil {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	m := new(dns.Msg)
@@ -137,7 +142,7 @@ func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.
 	// We don't expect these to fail as the regex matched digits but check anyway.
 	values, err := parseInts(params, 1, 4)
 	if err != nil {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
@@ -149,12 +154,12 @@ func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.
 	resp, err := c.logCtx.rpcClient.GetConsistencyProof(ctx, req)
 	if err != nil {
 		glog.Warningf("consistFunc(): GetConsistencyProofRequest=%v", err)
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	// Ensure the client requested a valid start index for the proof.
 	if values[1] < 0 || values[1] >= int64(len(resp.Proof.Hashes)) {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	rr := buildProofResponse(params[0], int(values[1]), resp.GetProof())
@@ -170,7 +175,7 @@ func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.
 func hashFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg) {
 	h, err := base32.StdEncoding.DecodeString(params[1])
 	if err != nil {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
@@ -182,7 +187,7 @@ func hashFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg
 	resp, err := c.logCtx.rpcClient.GetLeavesByHash(ctx, req)
 	if err != nil || len(resp.Leaves) != 1 {
 		glog.Warningf("hashFunc(): GetLeavesByHashRequest=%v, %v", resp, err)
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	rr := buildHashResponse(params[0], resp.Leaves[0])
@@ -200,7 +205,7 @@ func treeFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg
 	// We don't expect these to fail as the regex matched digits but check anyway.
 	values, err := parseInts(params, 1, 4)
 	if err != nil {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
@@ -213,12 +218,12 @@ func treeFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg
 	resp, err := c.logCtx.rpcClient.GetInclusionProof(ctx, req)
 	if err != nil {
 		glog.Warningf("hashFunc(): GetInclusionProof=%v, %v", resp, err)
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	// Ensure the client requested a valid start index for the proof.
 	if values[1] < 0 || values[1] >= int64(len(resp.Proof.Hashes)) {
-		failWithRcode(w, r, dns.RcodeServerFailure)
+		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
 	rr := buildProofResponse(params[0], int(values[1]), resp.GetProof())
@@ -304,9 +309,12 @@ func parseInts(p []string, first, last int) ([]int64, error) {
 	return values, nil
 }
 
-func failWithRcode(w dns.ResponseWriter, r *dns.Msg, rCode int) {
+func failWithRcode(w dns.ResponseWriter, r *dns.Msg, rCode int, err error) {
 	m := new(dns.Msg)
 	m = m.SetRcode(r, rCode)
+	if err != nil {
+		glog.Warningf("Request failed because of error: %v", err)
+	}
 	if err := w.WriteMsg(m); err != nil {
 		glog.Warningf("Failed to write error code: %v, err=%v", rCode, err)
 	}
