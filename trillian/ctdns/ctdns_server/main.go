@@ -132,12 +132,18 @@ func main() {
 
 	// Register DNS handlers for all the configured logs using the correct RPC
 	// client. Ignore any that don't specify a zone.
+	var zones int
 	for _, c := range cfg.LogConfigs.Config {
 		if len(c.DnsZone) > 0 {
+			zones++
 			if err := setupDNSHandler(clientMap[c.LogBackendName], *rpcDeadline, c); err != nil {
 				glog.Exitf("Failed to set up DNS log instance for %+v: %v", cfg, err)
 			}
 		}
+	}
+
+	if zones == 0 {
+		glog.Fatalf("No logs have a dns_zone configured. Exiting.")
 	}
 
 	// Handle metrics on the DefaultServeMux. We don't serve HTTP requests

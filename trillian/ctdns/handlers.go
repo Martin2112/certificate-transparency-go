@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// These handlers implement the CT over DNS proposal documented at:
+// https://github.com/google/certificate-transparency-rfcs/blob/master/dns/draft-ct-over-dns.md
+
 package ctdns
 
 import (
@@ -259,8 +262,9 @@ func buildProofResponse(q string, s int, proof *trillian.Proof) dns.RR {
 
 func buildSTHResponse(q string, root *types.LogRootV1) dns.RR {
 	rh := base64.StdEncoding.EncodeToString(root.RootHash)
-	ths := "todo" // We don't store this so will need to re-sign like CTFE
-	txt := fmt.Sprintf("%d.%d.%s.%s", root.TreeSize, root.TimestampNanos, rh, ths)
+	ts := root.TimestampNanos / 1000 / 1000 // Convert to millis.
+	ths := "todo"                           // We don't store this so will need to re-sign like CTFE
+	txt := fmt.Sprintf("%d.%d.%s.%s", root.TreeSize, ts, rh, ths)
 
 	// Response TXT has 4 fields: tree_size in ASCII decimal,
 	// timestamp in ASCII decimal, sha256_root_hash in base64,
