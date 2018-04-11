@@ -68,12 +68,21 @@ func TestDNSHandler(t *testing.T) {
 		TimestampNanos: 12345000000,
 	}
 
-	goodProof7 := &trillian.GetConsistencyProofResponse{
+	goodCProof7 := &trillian.GetConsistencyProofResponse{
 		Proof: makeProof(7),
 	}
 
 	// This proof is too large to fit in one response.
-	goodProof15 := &trillian.GetConsistencyProofResponse{
+	goodCProof15 := &trillian.GetConsistencyProofResponse{
+		Proof: makeProof(15),
+	}
+
+	goodIProof7 := &trillian.GetInclusionProofResponse{
+		Proof: makeProof(7),
+	}
+
+	// This proof is too large to fit in one response.
+	goodIProof15 := &trillian.GetInclusionProofResponse{
 		Proof: makeProof(15),
 	}
 
@@ -152,7 +161,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "7.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodCProof7, nil)
 			},
 			wantRcode: dns.RcodeServerFailure,
 		},
@@ -167,7 +176,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodCProof7, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(0, 7),
@@ -177,7 +186,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "3.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodCProof7, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(3, 7),
@@ -187,7 +196,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof15, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodCProof15, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(0, 7),
@@ -197,13 +206,13 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "8.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof15, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodCProof15, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(8, 15),
 		},
-		// Hash handler tests. The base32 string is "hello1hello2hello3" = 18
-		// bytes to match the size of an encoded Merkle Leaf.
+		// Tests for the Hash handler. The base32 string is "hello1hello2hello3",
+		// length 18 bytes to match the size of an encoded Merkle Leaf.
 		{
 			name: "HashBackendFail",
 			zone: "good.ct.googleapis.com",
@@ -245,6 +254,71 @@ func TestDNSHandler(t *testing.T) {
 			zone:      "good.ct.googleapis.com",
 			msg:       &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZLMNRXTG.hash.notgood.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			wantRcode: dns.RcodeNotZone,
+		},
+		// Tests for the Tree handler.
+		{
+			name: "TreeBackendFail",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(nil, errors.New("get proof failed"))
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name: "TreeStartOutOfRange",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "7.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(goodIProof7, nil)
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name:      "TreeMismatchRegex",
+			zone:      "good.ct.googleapis.com",
+			msg:       &dns.Msg{Question: []dns.Question{{Name: "=7.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			wantRcode: dns.RcodeNotZone,
+		},
+		{
+			name: "TreeAllProofAndItFits",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(goodIProof7, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(0, 7),
+		},
+		{
+			name: "TreePartialProofAndItFits",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "3.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(goodIProof7, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(3, 7),
+		},
+		{
+			name: "TreeProofTruncated",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(goodIProof15, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(0, 7),
+		},
+		{
+			name: "TreeRestOfProofTruncated",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "8.123456.999999.tree.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetInclusionProof(gomock.Any(), &trillian.GetInclusionProofRequest{LogId: 0x42, LeafIndex: 123456, TreeSize: 999999}).Times(1).Return(goodIProof15, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(8, 15),
 		},
 		// General tests
 		{
