@@ -41,7 +41,7 @@ var (
 	// In these formats the last (.*) is always the zone, this is checked outside
 	// the regex matching.
 	sthRE     = regexp.MustCompile(`^sth\.(.*)\.$`)
-	consistRE = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)\.sth-consistency\.(.*)\.$1`)
+	consistRE = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)\.sth-consistency\.(.*)\.$`)
 	hashRE    = regexp.MustCompile(`^([A-Z0-9]+)\.hash\.(.*)\.$`)
 	treeRE    = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)\.tree\.(.*)\.$`)
 )
@@ -108,8 +108,8 @@ func (c *CTDNSHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func sthFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg) {
-	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
-	defer cancelFunc()
+	ctx, cancel := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
+	defer cancel()
 	sth, err := GetTreeHead(ctx, c.logCtx.rpcClient, c.logCtx.logID, c.logCtx.LogPrefix)
 	if err != nil {
 		failWithRcode(w, r, dns.RcodeServerFailure, err)
@@ -136,7 +136,7 @@ func sthFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg)
 	}
 }
 
-// params will contain 0 = regex match text 1 = start_index, 2 = first, 3 = second
+// params will contain 0 = regex match text, 1 = start_index, 2 = first, 3 = second
 // 4 = zone.
 func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg) {
 	// We don't expect these to fail as the regex matched digits but check anyway.
@@ -145,8 +145,8 @@ func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.
 		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
-	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
-	defer cancelFunc()
+	ctx, cancel := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
+	defer cancel()
 	req := &trillian.GetConsistencyProofRequest{
 		LogId:          c.cfg.LogId,
 		FirstTreeSize:  values[2],
@@ -178,8 +178,8 @@ func hashFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg
 		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
-	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
-	defer cancelFunc()
+	ctx, cancel := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
+	defer cancel()
 	req := &trillian.GetLeavesByHashRequest{
 		LogId:    c.cfg.LogId,
 		LeafHash: [][]byte{h},
@@ -208,8 +208,8 @@ func treeFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg
 		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return
 	}
-	ctx, cancelFunc := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
-	defer cancelFunc()
+	ctx, cancel := context.WithTimeout(context.Background(), c.logCtx.instanceOpts.Deadline)
+	defer cancel()
 	req := &trillian.GetInclusionProofRequest{
 		LogId:     c.cfg.LogId,
 		LeafIndex: values[2],

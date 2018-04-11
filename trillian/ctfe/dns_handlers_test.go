@@ -16,6 +16,7 @@ package ctfe
 
 import (
 	"crypto"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -66,6 +67,15 @@ func TestDNSHandler(t *testing.T) {
 		TreeSize:       45678,
 		RootHash:       []byte("too short for a hash"),
 		TimestampNanos: 12345000000,
+	}
+
+	goodProof7 := &trillian.GetConsistencyProofResponse{
+		Proof: makeProof(7),
+	}
+
+	// This proof is too large to fit in one response.
+	goodProof15 := &trillian.GetConsistencyProofResponse{
+		Proof: makeProof(15),
 	}
 
 	tests := []dnsTest{
@@ -135,6 +145,65 @@ func TestDNSHandler(t *testing.T) {
 			},
 			wantRRs: 1,
 			wantTxt: fmt.Sprintf("45678.12345.%s.%s", goodHash, base64.StdEncoding.EncodeToString(fakeSig)),
+		},
+		// Tests for STH consistency handler.
+		{
+			name: "ConsistBackendFail",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(nil, errors.New("get proof failed"))
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name: "ConsistStartOutOfRange",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "7.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name: "ConsistAllProofAndItFits",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(0, 7),
+		},
+		{
+			name: "ConsistPartialProofAndItFits",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "3.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(3, 7),
+		},
+		{
+			name: "ConsistProofTruncated",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof15, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(0, 7),
+		},
+		{
+			name: "ConsistRestOfProofTruncated",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "8.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof15, nil)
+			},
+			wantRRs: 1,
+			wantTxt: expectProof(8, 15),
 		},
 		// General tests
 		{
@@ -215,6 +284,26 @@ func TestDNSHandler(t *testing.T) {
 			info.mockCtrl.Finish()
 		})
 	}
+}
+
+func makeProof(l int) *trillian.Proof {
+	p := &trillian.Proof{}
+	for i := 0; i < l; i++ {
+		input := []byte(fmt.Sprintf("hash%d", i))
+		hash := sha256.Sum256(input)
+		p.Hashes = append(p.Hashes, hash[:])
+	}
+	return p
+}
+
+func expectProof(s, l int) string {
+	p := make([]byte, 0, maxProofLen)
+	for i := s; i < l; i++ {
+		input := []byte(fmt.Sprintf("hash%d", i))
+		hash := sha256.Sum256(input)
+		p = append(p, hash[:]...)
+	}
+	return string(p)
 }
 
 type fakeResponseWriter struct {
