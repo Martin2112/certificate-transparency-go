@@ -37,6 +37,9 @@ import (
 // proof response.
 const maxProofLen = 255
 
+// The client omits the padding from the hash query so we need to add it back.
+const base32LeafPad = "==="
+
 var (
 	// In these formats the last (.*) is always the zone, this is checked outside
 	// the regex matching.
@@ -171,9 +174,9 @@ func consistFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.
 	}
 }
 
-// params will contain 0 = regex match text 1 = base32 hash, 2 = zone.
+// params will contain 0 = regex match text, 1 = base32 hash, 2 = zone.
 func hashFunc(c *CTDNSHandler, params []string, w dns.ResponseWriter, r *dns.Msg) {
-	h, err := base32.StdEncoding.DecodeString(params[1])
+	h, err := base32.StdEncoding.DecodeString(params[1] + base32LeafPad)
 	if err != nil {
 		failWithRcode(w, r, dns.RcodeServerFailure, err)
 		return

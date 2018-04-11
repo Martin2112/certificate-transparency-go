@@ -39,7 +39,6 @@ type dnsTest struct {
 	setup     func(*handlerTestInfo)
 	msg       *dns.Msg
 	signErr   error
-	writeErr  error
 	wantRRs   int
 	wantRcode int
 	wantTxt   string
@@ -78,6 +77,8 @@ func TestDNSHandler(t *testing.T) {
 		Proof: makeProof(15),
 	}
 
+	hashResponse := &trillian.GetLeavesByHashResponse{Leaves: []*trillian.LogLeaf{{LeafIndex: 555741}}}
+
 	tests := []dnsTest{
 		// Tests for the STH query handler.
 		{
@@ -85,7 +86,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), gomock.Any()).Times(1).Return(nil, errors.New("get root failed"))
+				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), &trillian.GetLatestSignedLogRootRequest{LogId: 0x42}).Times(1).Return(nil, errors.New("get root failed"))
 			},
 			wantRcode: dns.RcodeServerFailure,
 		},
@@ -94,19 +95,9 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), gomock.Any()).Times(1).Return(nil, errors.New("get root failed"))
+				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), &trillian.GetLatestSignedLogRootRequest{LogId: 0x42}).Times(1).Return(nil, errors.New("get root failed"))
 			},
 			signErr:   errors.New("sign failed"),
-			wantRcode: dns.RcodeServerFailure,
-		},
-		{
-			name: "STHWriteFail",
-			zone: "good.ct.googleapis.com",
-			msg:  &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
-			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), gomock.Any()).Times(1).Return(nil, errors.New("get root failed"))
-			},
-			writeErr:  errors.New("write failed"),
 			wantRcode: dns.RcodeServerFailure,
 		},
 		{
@@ -132,7 +123,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), gomock.Any()).Times(1).Return(&trillian.GetLatestSignedLogRootResponse{SignedLogRoot: badHashSLR}, nil)
+				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), &trillian.GetLatestSignedLogRootRequest{LogId: 0x42}).Times(1).Return(&trillian.GetLatestSignedLogRootResponse{SignedLogRoot: badHashSLR}, nil)
 			},
 			wantRcode: dns.RcodeServerFailure,
 		},
@@ -141,7 +132,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), gomock.Any()).Times(1).Return(&trillian.GetLatestSignedLogRootResponse{SignedLogRoot: goodSLR}, nil)
+				h.client.EXPECT().GetLatestSignedLogRoot(gomock.Any(), &trillian.GetLatestSignedLogRootRequest{LogId: 0x42}).Times(1).Return(&trillian.GetLatestSignedLogRootResponse{SignedLogRoot: goodSLR}, nil)
 			},
 			wantRRs: 1,
 			wantTxt: fmt.Sprintf("45678.12345.%s.%s", goodHash, base64.StdEncoding.EncodeToString(fakeSig)),
@@ -152,7 +143,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(nil, errors.New("get proof failed"))
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(nil, errors.New("get proof failed"))
 			},
 			wantRcode: dns.RcodeServerFailure,
 		},
@@ -161,16 +152,22 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "7.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
 			},
 			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name:      "ConsistMismatchRegex",
+			zone:      "good.ct.googleapis.com",
+			msg:       &dns.Msg{Question: []dns.Question{{Name: "=7.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			wantRcode: dns.RcodeNotZone,
 		},
 		{
 			name: "ConsistAllProofAndItFits",
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(0, 7),
@@ -180,7 +177,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "3.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof7, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof7, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(3, 7),
@@ -190,7 +187,7 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "0.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof15, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof15, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(0, 7),
@@ -200,10 +197,54 @@ func TestDNSHandler(t *testing.T) {
 			zone: "good.ct.googleapis.com",
 			msg:  &dns.Msg{Question: []dns.Question{{Name: "8.123456.999999.sth-consistency.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			setup: func(h *handlerTestInfo) {
-				h.client.EXPECT().GetConsistencyProof(gomock.Any(), gomock.Any()).Times(1).Return(goodProof15, nil)
+				h.client.EXPECT().GetConsistencyProof(gomock.Any(), &trillian.GetConsistencyProofRequest{LogId: 0x42, FirstTreeSize: 123456, SecondTreeSize: 999999}).Times(1).Return(goodProof15, nil)
 			},
 			wantRRs: 1,
 			wantTxt: expectProof(8, 15),
+		},
+		// Hash handler tests. The base32 string is "hello1hello2hello3" = 18
+		// bytes to match the size of an encoded Merkle Leaf.
+		{
+			name: "HashBackendFail",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZLMNRXTG.hash.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetLeavesByHash(gomock.Any(), &trillian.GetLeavesByHashRequest{LogId: 0x42, LeafHash: [][]byte{[]byte("hello1hello2hello3")}}).Times(1).Return(nil, errors.New("get root failed"))
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			// For this test the input matches the base32 regex but does not decode
+			// because it's an incomplete group.
+			name:      "HashBase32BadDecode",
+			zone:      "good.ct.googleapis.com",
+			msg:       &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZ.hash.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name: "HashBackendNoLeaves",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZLMNRXTG.hash.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetLeavesByHash(gomock.Any(), &trillian.GetLeavesByHashRequest{LogId: 0x42, LeafHash: [][]byte{[]byte("hello1hello2hello3")}}).Times(1).Return(&trillian.GetLeavesByHashResponse{}, nil)
+			},
+			wantRcode: dns.RcodeServerFailure,
+		},
+		{
+			name: "HashOK",
+			zone: "good.ct.googleapis.com",
+			msg:  &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZLMNRXTG.hash.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			setup: func(h *handlerTestInfo) {
+				h.client.EXPECT().GetLeavesByHash(gomock.Any(), &trillian.GetLeavesByHashRequest{LogId: 0x42, LeafHash: [][]byte{[]byte("hello1hello2hello3")}}).Times(1).Return(hashResponse, nil)
+			},
+			wantRRs: 1,
+			wantTxt: "555741",
+		},
+		{
+			name:      "HashNotOurZone",
+			zone:      "good.ct.googleapis.com",
+			msg:       &dns.Msg{Question: []dns.Question{{Name: "NBSWY3DPGFUGK3DMN4ZGQZLMNRXTG.hash.notgood.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
+			wantRcode: dns.RcodeNotZone,
 		},
 		// General tests
 		{
@@ -213,7 +254,7 @@ func TestDNSHandler(t *testing.T) {
 			wantRcode: dns.RcodeNotZone,
 		},
 		{
-			name:      "NotOurDomain",
+			name:      "NotOurZone",
 			zone:      "good.ct.googleapis2.com",
 			msg:       &dns.Msg{Question: []dns.Question{{Name: "sth.good.ct.googleapis.com", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}},
 			wantRcode: dns.RcodeNotZone,
@@ -238,10 +279,11 @@ func TestDNSHandler(t *testing.T) {
 				test.setup(&info)
 			}
 			cfg := new(configpb.LogConfig)
+			cfg.LogId = 0x42
 			cfg.DnsZone = test.zone
 
 			d := NewDNS(cfg, info.c)
-			frw := fakeResponseWriter{writeErr: test.writeErr}
+			frw := fakeResponseWriter{}
 			d.ServeDNS(&frw, test.msg)
 
 			// We should always get a single message written to the response writer.
