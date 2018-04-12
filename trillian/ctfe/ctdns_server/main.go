@@ -60,31 +60,13 @@ func main() {
 	flag.Parse()
 	ctx := context.Background()
 
-	var cfg *configpb.LogMultiConfig
-	var err error
-	// Get log config from file before we start. This is a different proto
-	// type if we're using a multi backend configuration (no rpcBackend set
-	// in flags). The single-backend config is converted to a multi config so
-	// they can be treated the same.
-	if len(*rpcBackend) > 0 {
-		cfg, err = readCfg(*logConfig, *rpcBackend)
-	} else {
-		cfg, err = readMultiCfg(*logConfig)
-	}
-
-	if err != nil {
-		glog.Exitf("Failed to read config: %v", err)
-	}
-
-	beMap, err := ctfe.ValidateLogMultiConfig(cfg)
-	if err != nil {
-		glog.Exitf("Invalid config: %v", err)
-	}
+	cfg, beMap := ctfe.MustLoadCTFEConfig(*rpcBackend, *logConfig)
 
 	glog.CopyStandardLogTo("WARNING")
 	glog.Info("**** CT DNS Server Starting ****")
 
 	var res naming.Resolver
+	var err error
 	if len(*etcdServers) > 0 {
 		// Use etcd to provide endpoint resolution.
 		cfg := clientv3.Config{Endpoints: strings.Split(*etcdServers, ","), DialTimeout: 5 * time.Second}
@@ -238,20 +220,3 @@ func setupDNSHandler(client trillian.TrillianLogClient, deadline time.Duration, 
 	return nil
 }
 
-func readMultiCfg(filename string) (*configpb.LogMultiConfig, error) {
-	cfg, err := ctfe.MultiLogConfigFromFile(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
-}
-
-func readCfg(filename string, backendSpec string) (*configpb.LogMultiConfig, error) {
-	cfg, err := ctfe.LogConfigFromFile(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	return ctfe.ToMultiLogConfig(cfg, backendSpec), nil
-}
