@@ -20,9 +20,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -30,9 +28,9 @@ import (
 	"github.com/golang/glog"
 	"github.com/google/certificate-transparency-go/trillian/ctfe"
 	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
-	"github.com/google/certificate-transparency-go/trillian/util"
 	"github.com/google/trillian"
 	"github.com/google/trillian/monitoring/prometheus"
+	"github.com/google/trillian/util"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/naming"
@@ -76,6 +74,7 @@ func main() {
 	}
 
 	var res naming.Resolver
+	var err error
 	if len(*etcdServers) > 0 {
 		// Use etcd to provide endpoint resolution.
 		cfg := clientv3.Config{Endpoints: strings.Split(*etcdServers, ","), DialTimeout: 5 * time.Second}
@@ -103,8 +102,11 @@ func main() {
 			etcdRes.Update(ctx, *etcdMetricsService, byeMetrics)
 		}()
 	} else {
-		// Use a fixed endpoint resolution that just returns the addresses configured on the command line.
-		res = util.FixedBackendResolver{}
+		// Use a DNS naming resolver.
+		res, err = naming.NewDNSResolverWithFreq(time.Second)
+		if err != nil {
+			glog.Exitf("Could not create naming resolver: %v", err)
+		}
 	}
 
 	// Dial all our log backends.
@@ -169,28 +171,13 @@ func main() {
 	}
 
 	// Bring up the HTTP server and serve until we get a signal not to.
-	go awaitSignal(func() {
+	go util.AwaitSignal(func() {
 		os.Exit(1)
 	})
 	server := http.Server{Addr: *httpEndpoint, Handler: nil}
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	glog.Warningf("Server exited: %v", err)
 	glog.Flush()
-}
-
-// awaitSignal waits for standard termination signals, then runs the given
-// function; it should be run as a separate goroutine.
-func awaitSignal(doneFn func()) {
-	// Arrange notification for the standard set of signals used to terminate a server
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	// Now block main and wait for a signal
-	sig := <-sigs
-	glog.Warningf("Signal received: %v", sig)
-	glog.Flush()
-
-	doneFn()
 }
 
 func setupAndRegister(ctx context.Context, client trillian.TrillianLogClient, deadline time.Duration, cfg *configpb.LogConfig) error {
@@ -204,4 +191,3 @@ func setupAndRegister(ctx context.Context, client trillian.TrillianLogClient, de
 	}
 	return nil
 }
-

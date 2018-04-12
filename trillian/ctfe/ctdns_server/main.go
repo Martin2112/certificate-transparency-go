@@ -20,9 +20,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -41,6 +39,7 @@ import (
 	_ "github.com/google/trillian/crypto/keys/der/proto"
 	_ "github.com/google/trillian/crypto/keys/pem/proto"
 	_ "github.com/google/trillian/crypto/keys/pkcs11/proto"
+	"github.com/google/trillian/util"
 )
 
 // Global flags that affect all log instances.
@@ -155,7 +154,7 @@ func main() {
 	}
 
 	// Bring up the DNS udpServer and serve until we get a signal not to.
-	go awaitSignal(func() {
+	go util.AwaitSignal(func() {
 		os.Exit(1)
 	})
 	// TODO(Martin2112): Might need a separate metrics endpoint like CTFE.
@@ -188,21 +187,6 @@ func main() {
 		glog.Errorf("Failed to setup the TCP DNS Server: %s\n", err.Error())
 	}
 	glog.Flush()
-}
-
-// awaitSignal waits for standard termination signals, then runs the given
-// function; it should be run as a separate goroutine.
-func awaitSignal(doneFn func()) {
-	// Arrange notification for the standard set of signals used to terminate a server
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	// Now block main and wait for a signal
-	sig := <-sigs
-	glog.Warningf("Signal received: %v", sig)
-	glog.Flush()
-
-	doneFn()
 }
 
 func setupDNSHandler(client trillian.TrillianLogClient, deadline time.Duration, cfg *configpb.LogConfig) error {
