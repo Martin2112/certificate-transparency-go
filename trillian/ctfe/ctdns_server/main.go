@@ -32,7 +32,6 @@ import (
 	"github.com/google/trillian/monitoring/prometheus"
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/naming"
 
 	// Register PEMKeyFile, PrivateKey and PKCS11Config ProtoHandlers
@@ -59,7 +58,8 @@ func main() {
 	flag.Parse()
 	ctx := context.Background()
 
-	cfg, beMap := ctfe.MustLoadCTFEConfig(*rpcBackend, *logConfig)
+	// Load the config - exits if it's not usable.
+	cfg, beMap := ctfe.MustLoadConfig(*rpcBackend, *logConfig)
 
 	glog.CopyStandardLogTo("WARNING")
 	glog.Info("**** CT DNS Server Starting ****")
@@ -95,23 +95,7 @@ func main() {
 	}
 
 	// Dial all our log backends.
-	clientMap := make(map[string]trillian.TrillianLogClient)
-	for _, be := range beMap {
-		glog.Infof("Dialling backend: %v", be)
-		bal := grpc.RoundRobin(res)
-		opts := []grpc.DialOption{grpc.WithInsecure(), grpc.WithBalancer(bal)}
-		if len(beMap) == 1 {
-			// If there's only one of them we use the blocking option as we can't
-			// serve anything until connected.
-			opts = append(opts, grpc.WithBlock())
-		}
-		conn, err := grpc.Dial(be.BackendSpec, opts...)
-		if err != nil {
-			glog.Exitf("Could not dial RPC udpServer: %v: %v", be, err)
-		}
-		defer conn.Close()
-		clientMap[be.Name] = trillian.NewTrillianLogClient(conn)
-	}
+	clientMap := ctfe.MustDialBackends(beMap, res)
 
 	// Register DNS handlers for all the configured logs using the correct RPC
 	// client. Ignore any that don't specify a zone.
@@ -139,18 +123,7 @@ func main() {
 	if *getSTHInterval > 0 {
 		// Regularly update the internal STH for each log so our metrics stay up-to-date with any tree head
 		// changes.
-		for _, c := range cfg.LogConfigs.Config {
-			ticker := time.NewTicker(*getSTHInterval)
-			go func(c *configpb.LogConfig) {
-				glog.Infof("start internal get-sth operations on log %v (%d)", c.Prefix, c.LogId)
-				for t := range ticker.C {
-					glog.V(1).Infof("tick at %v: force internal get-sth for log %v (%d)", t, c.Prefix, c.LogId)
-					if _, err := ctfe.GetTreeHead(ctx, clientMap[c.LogBackendName], c.LogId, c.Prefix); err != nil {
-						glog.Warningf("failed to retrieve tree head for log %v (%d): %v", c.Prefix, c.LogId, err)
-					}
-				}
-			}(c)
-		}
+		ctfe.StartSTHUpdates(ctx, cfg, clientMap, *getSTHInterval)
 	}
 
 	// Bring up the DNS udpServer and serve until we get a signal not to.
@@ -203,4 +176,3 @@ func setupDNSHandler(client trillian.TrillianLogClient, deadline time.Duration, 
 	dns.DefaultServeMux.Handle(cfg.DnsZone, handler)
 	return nil
 }
-

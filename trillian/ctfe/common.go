@@ -15,11 +15,20 @@
 package ctfe
 
 import (
-	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
+	"context"
+	"time"
+
 	"github.com/golang/glog"
+	"github.com/google/certificate-transparency-go/trillian/ctfe/configpb"
+	"github.com/google/trillian"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/naming"
 )
 
-func MustLoadCTFEConfig(backend, configPath string) (*configpb.LogMultiConfig, map[string]*configpb.LogBackend) {
+// MustLoadConfig loads, parses and validates a CTFE / CTDNS config.
+// if the config cannot be loaded or is in valid then it will exit the
+// program.
+func MustLoadConfig(backend, configPath string) (*configpb.LogMultiConfig, map[string]*configpb.LogBackend) {
 	var cfg *configpb.LogMultiConfig
 	var err error
 	// Get log config from file before we start. This is a different proto
@@ -42,6 +51,50 @@ func MustLoadCTFEConfig(backend, configPath string) (*configpb.LogMultiConfig, m
 	}
 
 	return cfg, beMap
+}
+
+// MustDialBackends dials one or more backends in a map. If there is only one
+// RPC backend then this blocks until it has been dialled or an error occurs.
+func MustDialBackends(beMap map[string]*configpb.LogBackend, res naming.Resolver) map[string]trillian.TrillianLogClient {
+	// Dial all our log backends.
+	clientMap := make(map[string]trillian.TrillianLogClient)
+	for _, be := range beMap {
+		glog.Infof("Dialling backend: %v", be)
+		bal := grpc.RoundRobin(res)
+		opts := []grpc.DialOption{grpc.WithInsecure(), grpc.WithBalancer(bal)}
+		if len(beMap) == 1 {
+			// If there's only one of them we use the blocking option as we can't
+			// serve anything until connected.
+			opts = append(opts, grpc.WithBlock())
+		}
+		conn, err := grpc.Dial(be.BackendSpec, opts...)
+		if err != nil {
+			glog.Exitf("Could not dial RPC server: %v: %v", be, err)
+		}
+		defer conn.Close()
+		clientMap[be.Name] = trillian.NewTrillianLogClient(conn)
+	}
+
+	return clientMap
+}
+
+// StartSTHUpdates begins periodic updates of STH from the backends of logs
+// specified in the config.
+func StartSTHUpdates(ctx context.Context, cfg *configpb.LogMultiConfig, clientMap map[string]trillian.TrillianLogClient, interval time.Duration) {
+	// Regularly update the internal STH for each log so our metrics stay up-to-date with any tree head
+	// changes that are not triggered by us.
+	for _, c := range cfg.LogConfigs.Config {
+		ticker := time.NewTicker(interval)
+		go func(c *configpb.LogConfig) {
+			glog.Infof("start internal get-sth operations on log %v (%d)", c.Prefix, c.LogId)
+			for t := range ticker.C {
+				glog.V(1).Infof("tick at %v: force internal get-sth for log %v (%d)", t, c.Prefix, c.LogId)
+				if _, err := GetTreeHead(ctx, clientMap[c.LogBackendName], c.LogId, c.Prefix); err != nil {
+					glog.Warningf("failed to retrieve tree head for log %v (%d): %v", c.Prefix, c.LogId, err)
+				}
+			}
+		}(c)
+	}
 }
 
 func readMultiCfg(filename string) (*configpb.LogMultiConfig, error) {
