@@ -255,11 +255,9 @@ func main() {
 			fmt.Print(".")
 		}
 		mc := "H4sIAAAAAAAA/4xVPbLzMAjsv1OkU8FI9LqDOAUFDUNBxe2/QXYSS/HLe5SeXZYfsf73+D1KB8D2B2RxZpGw8gcsSoQYeH1ya0fof1BpnhpuUR+P8ijorESq8Yto6WYWqsrMGh4qSkdI/YFZWu8d3AAAkklEHBGTNAYxbpKltWRgRzQ3A3CImDIjVSVCicThbLK0VjsiAGAGIIKbmUcIq/KkqYo4BNZDqtgZMAPNPSJCRISZZ36d5OiTUbqJZAOYIoCHUreImJsCPMobQ20SqjBbLWWbBGRREhHQU2MMUu9TwB12cC7X3SNrs1yPKvv5gD4yn+kzshOfMg69fVknJNbdcsjuDvgNXWPmTXCuEnuvP4NdlSWymIQjfsFWzbERZ5sz730NpbvoOGMOzu7eeBUaW3w8r4z2iRuD4uY6W9wgZ96+YZvpHW7SabvlH7CviKWQyp81EL2zj7Fcbee7MpSuNHzj2z18LdAvAkAr8pr/3cGFUO+apa2n64TK3XouTBpEch2Rf8GnzajAFY438+SzgURfV7sXT+q1FNTJYdLF9WxJzFheAyNmXfKuiel5/mW2QqSx2umlQ+L2GpTPWZBu5tvpXW5/fy4xTYd2ly+vR052dZbjTIh0u4vzyRDF6kPzoRLRfhp2pqnr5wce5eAGP6onaRv8EYdl7gfd5zIId/gxYvr4pWW7KnbjoU6kRL62e25b44ZQz7Oaf4GrTovnqemNsyOdL40Dls11ocMPn29nYeUvmt3S1v8DAAD//wEAAP//TRo+KHEIAAA="
-		mcData, _ := base64.StdEncoding.DecodeString(mc)
-		b := bytes.NewReader(mcData)
-		r, _ := gzip.NewReader(b)
-		io.Copy(os.Stdout, r)
-		r.Close()
+		if err := unzipToStdout(mc); err != nil {
+			glog.Exitf("error unzipping: %v", err)
+		}
 		fmt.Print("\n\nHammer Time\n\n")
 	}
 
@@ -326,4 +324,20 @@ func main() {
 		glog.Exitf("non-zero error count (%d), exiting", errCount)
 	}
 	glog.Info("  no errors; done")
+}
+
+func unzipToStdout(s string) error {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return err
+	}
+	br := bytes.NewReader(b)
+	r, _ := gzip.NewReader(br)
+	if _, err := io.Copy(os.Stdout, r); err != nil {
+		return err
+	}
+	if err := r.Close(); err != nil {
+		return err
+	}
+	return nil
 }

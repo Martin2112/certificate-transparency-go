@@ -97,11 +97,13 @@ const (
 // Limiter is an interface to allow different rate limiters to be used with the
 // hammer.
 type Limiter interface {
+	// Wait pauses for a duration according to the Limiter policy.
 	Wait()
 }
 
 type unLimited struct{}
 
+// Wait() does nothing on an unlimited rate limiter.
 func (u unLimited) Wait() {
 }
 
